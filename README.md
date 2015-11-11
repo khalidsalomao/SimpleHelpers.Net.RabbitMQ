@@ -4,6 +4,16 @@ SimpleHelpers.Net.RabbitMQ
 RabbitMQ .net work queue helper class
 
 
+How to install?
+--------
+
+Use NuGet [https://www.nuget.org/packages/SimpleHelpers.RabbitMQWorkQueue/]
+
+```
+Install-Package SimpleHelpers.RabbitMQWorkQueue
+```
+
+
 Description and Examples
 --------
 
