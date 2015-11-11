@@ -87,9 +87,10 @@ namespace RabbitMqTest
 				int count = 0;
 				using (var queue = CreateQueue ())
 				{                    
-                    foreach (var i in queue.Get (TimeSpan.FromSeconds (1800)))                                        
-					//ParallelTasks<RabbitWorkMessage>.Process (queue.Get (TimeSpan.FromSeconds (1800), true), 4, i =>
+                    foreach (var i in queue.Get (TimeSpan.FromMinutes (30)))                                        
+					//ParallelTasks<RabbitWorkMessage>.Process (queue.Get (TimeSpan.FromSeconds (1800)), 4, i =>
                     {
+
                         // ... 
                         //i.Ack ();
 
