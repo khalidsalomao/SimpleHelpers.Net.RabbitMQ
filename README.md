@@ -17,7 +17,7 @@ Install-Package SimpleHelpers.RabbitMQWorkQueue
 Description and Examples
 --------
 
-SimpleHelpers.RabbitWorkQueue is a simple helper class (RabbitWorkQueue) that implements a work queue using RabbitMQ.
+SimpleHelpers.RabbitWorkQueue is a simple helper class (RabbitWorkQueue) that implements a work queue using RabbitMQ server and the official [RabbitMQ .NET Client](https://www.rabbitmq.com/dotnet.html).
 
 ### Features
 
@@ -153,7 +153,7 @@ Batch size configures the maximum number of unacknowledged messages for this con
 
 Use `0` for ilimited unacknowledged messages (not recommended).
 
-This parameter affects the *QoS prefetch setting*. If you want a more in-depth view of this setting, you should read (Some queuing theory: throughput, latency and bandwidth)[https://www.rabbitmq.com/blog/2012/05/11/some-queuing-theory-throughput-latency-and-bandwidth/].
+This parameter affects the *QoS prefetch setting*. If you want a more in-depth view of this setting, you should read [Some queuing theory: throughput, latency and bandwidth](https://www.rabbitmq.com/blog/2012/05/11/some-queuing-theory-throughput-latency-and-bandwidth/).
 
 As a guide line, follow these recommendations:
 
