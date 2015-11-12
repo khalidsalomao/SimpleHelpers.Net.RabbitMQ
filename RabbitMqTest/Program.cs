@@ -71,7 +71,7 @@ namespace RabbitMqTest
 			var publish = Task.Run (() => {
 				using (var queue = CreateQueue ())
 				{
-					for (var j = 0; j < 1000; j++)
+					for (var j = 0; j < 10; j++)
 					{ 
 						for (var i = 0; i < 250; i++)
                             queue.Publish ("teste khalid " + i);
@@ -80,15 +80,15 @@ namespace RabbitMqTest
 				}
 			});
 
-            //Task.Delay (30000).Wait ();
+            Task.Delay (30000).Wait ();
 
 			var consume = Task.Run (() =>
 			{
 				int count = 0;
 				using (var queue = CreateQueue ())
 				{                    
-                    foreach (var i in queue.Get (TimeSpan.FromMinutes (30)))                                        
-					//ParallelTasks<RabbitWorkMessage>.Process (queue.Get (TimeSpan.FromSeconds (1800)), 4, i =>
+                    //foreach (var i in queue.Get (TimeSpan.FromMinutes (30)))                                        
+					ParallelTasks<RabbitWorkMessage>.Process (queue.Get (TimeSpan.FromSeconds (1800)), 30, i =>
                     {
 
                         // ... 
@@ -102,8 +102,8 @@ namespace RabbitMqTest
                         //Task.Delay (50).Wait ();
                         if (count++ % 250 == 0)
                             logger.Debug ("ack progress " + count);
-                    }
-                    //});
+                    //}
+                    });
 				}
 			});
 
@@ -115,7 +115,7 @@ namespace RabbitMqTest
 
 		public static RabbitWorkQueue CreateQueue ()
 		{
-            return new RabbitWorkQueue (ProgramOptions.Get ("rabbitmq"), "RabbitMqTest-test-queue", 0, RabbitWorkQueueMode.OpenOrCreateInMemory, 0, 1000);
+            return new RabbitWorkQueue (ProgramOptions.Get ("rabbitmq"), "RabbitMqTest-test-queue", 60, RabbitWorkQueueMode.OpenOrCreateInMemory, 10000, 10);
 		}
 
 	}
