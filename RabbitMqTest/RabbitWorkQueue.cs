@@ -19,29 +19,66 @@ namespace RabbitMqTest
         private ushort _batchSize;
         private int _retryDelayMilliseconds;        
         private long _maxRetry;
+        private IModel _consumerChannel;
+        private IModel _publishChannel;
 
         private string delayedExchange;
         private string deadLetterQueue;
 
+        /// <summary>
+        /// Current connection
+        /// </summary>
         public IConnection Connection
         {
             get { return _factory.GetConnection (); }
         }
 
-        public IModel Channel { get; private set; }
+        /// <summary>
+        /// Consumer channel. Channel where used for consumer subscription and get operations.
+        /// </summary>
+        public IModel ConsumerChannel
+        {            
+            get
+            {
+                if (_consumerChannel == null)
+                    _consumerChannel = CreateChannel ();
+                return _consumerChannel;
+            }
+        }
+
+        /// <summary>
+        /// Channel (IModel) used for message publishing operations
+        /// </summary>
+        public IModel PublishChannel
+        {
+            get
+            {
+                if (_publishChannel == null || _publishChannel.IsClosed)
+                    _publishChannel = CreateChannel ();
+                return _publishChannel;
+            }
+        }
+
+        /// <summary>
+        /// Current queue name (used as routing key for publish requests)
+        /// </summary>
         public string QueueName { get; set; }
-        public RabbitWorkQueueMode Mode {  get; private set; }
+        
+        /// <summary>
+        ///  How to handle queue creation and message publishing.
+        /// </summary>
+        public RabbitWorkQueueMode Mode { get; private set; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RabbitWorkQueue" /> class.
         /// </summary>
         /// <param name="queueUri">The queue URI address formated as amqp://login:password@address:port</param>
         /// <param name="queueName">Queue name. If empty, a temporary queue with a random queue name will be created.</param>
-        /// <param name="batchSize">Maximum number of unacknoledged messages for this connection. This helps to improve throughput as multiple messages are received for each request. Use '0' for ilimited.</param>
+        /// <param name="batchSize">Maximum number of unacknowledged messages for this connection. This helps to improve throughput as multiple messages are received for each request. Use '0' for ilimited.</param>
         /// <param name="mode">How to handle queue creation and message publishing.</param>
         /// <param name="retryDelayMilliseconds">The retry delay milliseconds. In case of failed message (Nack) will wait the retry delay before becoming available again.</param>
         /// <param name="maxRetry">The max retry for failed (Nack) messages.</param>
-        public RabbitWorkQueue (string queueUri, string queueName, ushort batchSize = 20, RabbitWorkQueueMode mode = RabbitWorkQueueMode.Persistent, int retryDelayMilliseconds = 5000, int maxRetry = 0)
+        public RabbitWorkQueue (string queueUri, string queueName, ushort batchSize = 10, RabbitWorkQueueMode mode = RabbitWorkQueueMode.OpenOrCreateInMemory, int retryDelayMilliseconds = 0, int maxRetry = 0)
         {
             if (queueUri.IndexOf ("://") < 0)
                 queueUri = "amqp://" + queueUri;
@@ -60,16 +97,16 @@ namespace RabbitMqTest
         /// <param name="username">RabbitMQ username.</param>
         /// <param name="password">RabbitMQ password.</param>
         /// <param name="queueName">Queue name. If empty, a temporary queue with a random queue name will be created.</param>
-        /// <param name="batchSize">Maximum number of unacknoledged messages for this connection. This helps to improve throughput as multiple messages are received for each request. Use '0' for ilimited.</param>
+        /// <param name="batchSize">Maximum number of unacknowledged messages for this connection. This helps to improve throughput as multiple messages are received for each request. Use '0' for ilimited.</param>
         /// <param name="mode">How to handle queue creation and message publishing.</param>
         /// <param name="retryDelayMilliseconds">The retry delay milliseconds. In case of failed message (Nack) will wait the retry delay before becoming available again.</param>
         /// <param name="maxRetry">The max retry for failed (Nack) messages.</param>
-        public RabbitWorkQueue (string address, int port, string username, string password, string queueName, ushort batchSize = 25, RabbitWorkQueueMode mode = RabbitWorkQueueMode.Persistent, int retryDelayMilliseconds = 0, int maxRetry = 0)
+        public RabbitWorkQueue (string address, int port, string username, string password, string queueName, ushort batchSize = 10, RabbitWorkQueueMode mode = RabbitWorkQueueMode.OpenOrCreateInMemory, int retryDelayMilliseconds = 0, int maxRetry = 0)
         {
             Initialize (address, port, username, password, queueName, batchSize, mode, retryDelayMilliseconds, maxRetry);
         }
 
-        private void Initialize (string address, int port, string username, string password, string queueName, ushort batchSize = 25, RabbitWorkQueueMode mode = RabbitWorkQueueMode.Persistent, int retryDelayMilliseconds = 5000, int maxRetry = 0)
+        private void Initialize (string address, int port, string username, string password, string queueName, ushort batchSize, RabbitWorkQueueMode mode, int retryDelayMilliseconds, int maxRetry)
         {
             QueueName = queueName;
             Mode = mode;            
@@ -79,13 +116,16 @@ namespace RabbitMqTest
 
             // open connection and channel
             _factory = new RabbitConnectionFactory (address, port, username, password);
-            EnsureChannelIsOpen ();
+            
+            // create our channels
+            _publishChannel = CreateChannel ();
+            _consumerChannel = CreateChannel ();
 
             // publish mode
-            _publishPersistent = mode == RabbitWorkQueueMode.Persistent || mode == RabbitWorkQueueMode.ExistingPersistent;
+            _publishPersistent = mode == RabbitWorkQueueMode.OpenOrCreatePersistent || mode == RabbitWorkQueueMode.OpenPersistent;
 
             // create queue (only if not exists)
-            if (mode != RabbitWorkQueueMode.ExistingPersistent && mode != RabbitWorkQueueMode.ExistingTransient)
+            if (mode != RabbitWorkQueueMode.OpenPersistent && mode != RabbitWorkQueueMode.OpenInMemory)
             {
                 if (String.IsNullOrEmpty (queueName))
                     queueName = "temp_" + System.IO.Path.GetRandomFileName ().Replace (".", "") + "_" + DateTime.UtcNow.ToString ("yyyyMMdd");
@@ -94,7 +134,7 @@ namespace RabbitMqTest
                 if (retryDelayMilliseconds > 0)
                 {
                     delayedExchange = queueName + ".delayed";
-                    SafeExecute (() => Channel.ExchangeDeclare (delayedExchange, "x-delayed-message", true, true, CreateProperty ("x-delayed-type", "direct")), 1, 0, true);
+                    SafeExecute (c => c.ExchangeDeclare (delayedExchange, "x-delayed-message", true, true, CreateProperty ("x-delayed-type", "direct")));
                 }
 
                 // create dead letter queue
@@ -108,8 +148,16 @@ namespace RabbitMqTest
                 QueueName = EnsureQueueExists (queueName, mode, args);                
 
                 // bind together exchanges to queue                
-                SafeExecute(() => Channel.QueueBind (QueueName, delayedExchange, QueueName), 1, 0, true);
+                SafeExecute (c => c.QueueBind (QueueName, delayedExchange, QueueName));
             }
+        }
+
+        /// <summary>
+        /// Creates a new channel (IModel).
+        /// </summary>
+        public IModel CreateChannel ()
+        {
+            return _factory.GetConnection ().CreateModel ();
         }
 
         /// <summary>
@@ -120,7 +168,7 @@ namespace RabbitMqTest
         /// <param name="exchange">[Optional] The exchange name.</param>
         public void Publish<T> (T msg, string exchange = "")
         {
-            PublishMessage (msg, exchange, _retryDelayMilliseconds);
+            PublishMessage (msg, exchange, QueueName, _retryDelayMilliseconds);
         }
 
         /// <summary>
@@ -131,7 +179,7 @@ namespace RabbitMqTest
         /// <param name="delayMilliseconds">The delay milliseconds before the message is available in the queue.</param>
         public void PublishDelayed<T> (T msg, int delayMilliseconds)
         {
-            PublishMessage (msg, delayedExchange, delayMilliseconds);
+            PublishMessage (msg, delayedExchange, QueueName, delayMilliseconds);
         }
 
         /// <summary>
@@ -141,27 +189,25 @@ namespace RabbitMqTest
         /// <param name="msg">The message.</param>
         /// <param name="exchange">[Optional] The exchange name.</param>
         /// <param name="delayMilliseconds">[Optional] The delay milliseconds before the message is available in the queue.</param>
-        private void PublishMessage<T> (T msg, string exchange, int delayMilliseconds)
+        private void PublishMessage<T> (T msg, string exchange, string queueName, int delayMilliseconds)
         {
             // set persistent property
             IBasicProperties basicProperties = null;
             if (_publishPersistent)
             {
-                if (basicProperties == null) basicProperties = Channel.CreateBasicProperties ();
+                if (basicProperties == null) basicProperties = ConsumerChannel.CreateBasicProperties ();
                 basicProperties.Persistent = _publishPersistent;
             }
 
             if (_retryDelayMilliseconds > 0)
             {
-                if (basicProperties == null) basicProperties = Channel.CreateBasicProperties ();
+                if (basicProperties == null) basicProperties = ConsumerChannel.CreateBasicProperties ();
                 basicProperties.AddHeader ("x-delay", _retryDelayMilliseconds);
             }
 
-            EnsureChannelIsOpen ();
-
             // publish message            
-            Channel.BasicPublish (exchange: exchange ?? "",
-                    routingKey: QueueName,
+            PublishChannel.BasicPublish (exchange: exchange ?? "",
+                    routingKey: queueName,
                     basicProperties: basicProperties,
                     body: GetMessageContent (msg));
         }
@@ -188,7 +234,7 @@ namespace RabbitMqTest
             while (!done)
             {
                 done = true;
-                using (var sub = new RabbitMQ.Client.MessagePatterns.Subscription (Channel, QueueName, noAck))
+                using (var sub = new RabbitMQ.Client.MessagePatterns.Subscription (ConsumerChannel, QueueName, noAck))
                 { 
                     while (sub.Next (millisecondsTimeout, out item))
                     {
@@ -227,11 +273,13 @@ namespace RabbitMqTest
                     lock (QueueName)
                     {
                         deadLetterQueue = QueueName + ".dead-letter";
-                        deadLetterQueue = EnsureQueueExists (deadLetterQueue, RabbitWorkQueueMode.Transient);
+                        deadLetterQueue = EnsureQueueExists (deadLetterQueue, Mode);
                     }
                 }
-                Channel.BasicPublish ("", deadLetterQueue, (IBasicProperties)properties.Clone (), msg.Body);
-                Channel.BasicAck (msg.DeliveryTag, false);
+                // publish message to the deadletter queue
+                PublishChannel.BasicPublish ("", deadLetterQueue, (IBasicProperties)properties.Clone (), msg.Body);
+                // delete message
+                Ack (msg);
                 return false;
             }
             return true;
@@ -242,9 +290,8 @@ namespace RabbitMqTest
         /// </summary>
         /// <param name="noAck">If the acknowledgement will be manual (noAck == false) or automatic (true).</param>
         public RabbitWorkMessage GetOne (bool noAck = false)
-        {
-            EnsureChannelIsOpen ();
-            var item = Channel.BasicGet (QueueName, noAck);
+        {            
+            var item = ConsumerChannel.BasicGet (QueueName, noAck);
             return item != null ? new RabbitWorkMessage (this, item) : null;
         }
 
@@ -254,7 +301,7 @@ namespace RabbitMqTest
         /// <param name="msg">The message instance</param>
         public void Ack (RabbitWorkMessage msg)
         {
-            if (Channel.IsOpen) Channel.BasicAck (msg.DeliveryTag, false);
+            if (ConsumerChannel.IsOpen) ConsumerChannel.BasicAck (msg.DeliveryTag, false);
         }
 
         /// <summary>
@@ -282,12 +329,12 @@ namespace RabbitMqTest
         /// <param name="requeue">False will send to dead letter exchange, true will send back to the queue.</param>
         private void Nack (RabbitWorkMessage msg, bool requeue = false)
         {
-            if (Channel.IsOpen)
+            if (ConsumerChannel.IsOpen)
             {
                 // check max retry limit
                 if (!requeue && !CheckRetryLimit (_maxRetry - 1, msg))
                     return;
-                Channel.BasicNack (msg.DeliveryTag, false, requeue);
+                ConsumerChannel.BasicNack (msg.DeliveryTag, false, requeue);
             }
         }
 
@@ -304,12 +351,12 @@ namespace RabbitMqTest
         /// </summary>
         public void Close ()
         {
-            if (Channel.IsOpen)
+            if (ConsumerChannel.IsOpen)
             {
                 // set auto close to true, so that it will close if no other channel is active
                 if (Connection.IsOpen)
                     Connection.AutoClose = true;
-                Channel.Close ();
+                ConsumerChannel.Close ();
             }
         }
 
@@ -317,30 +364,21 @@ namespace RabbitMqTest
         {
             string str = msg is string ? msg as string : Jil.JSON.Serialize (msg, DefaultJilSettings);
             return Encoding.UTF8.GetBytes (str);
-        }
-
-        private void EnsureChannelIsOpen ()
-        {
-            if (Channel == null || Channel.IsClosed)
-            {
-                Channel = _factory.GetConnection ().CreateModel ();
-                Channel.BasicQos (0, _batchSize, false);
-            }
-        }
+        }        
 
         private string EnsureQueueExists (string queueName, RabbitWorkQueueMode mode, IDictionary<string, object> queueArgs = null)
         {
             queueName = queueName ?? "";
 
-            using (var ch = _factory.GetConnection ().CreateModel ())
+            using (var ch = CreateChannel ())
             {                
                 // try to create queue
                 try
                 {
                     var res = ch.QueueDeclare (queue: queueName ?? "",
-                        durable: mode == RabbitWorkQueueMode.Persistent,
+                        durable: mode == RabbitWorkQueueMode.OpenOrCreatePersistent,
                         exclusive: false,
-                        autoDelete: mode == RabbitWorkQueueMode.Temporary,
+                        autoDelete: mode == RabbitWorkQueueMode.OpenOrCreateTemporary,
                         arguments: queueArgs);
 
                     // set queue name if a random one was generated
@@ -359,7 +397,7 @@ namespace RabbitMqTest
             return headers;
         }
 
-        private bool SafeExecute (Action action, ushort retry, int delayMilliseconds, bool silentExceptions)
+        private bool SafeExecute (Action<IModel> action, ushort retry = 1, int delayMilliseconds = 0, bool silentExceptions = true)
         {
             if (retry < 0)
                 retry = 1;
@@ -367,12 +405,12 @@ namespace RabbitMqTest
             {
                 try
                 {
-                    action ();
+                    using (var channel = CreateChannel ())
+                        action (channel);
                     return true;
                 }
                 catch
-                {
-                    EnsureChannelIsOpen ();
+                {                    
                     if (i == retry - 1)
                     {
                         if (!silentExceptions)
@@ -392,25 +430,33 @@ namespace RabbitMqTest
     public enum RabbitWorkQueueMode
     {
         /// <summary>
-        /// Fast in-memory queue (durable but not persistent) that will discard messages in case of a server restart
+        /// Open or creates fast in-memory durable queue and publishes messages in-memory mode.<para/>
+        /// Also ensures that a delayed exchange exists.<para/>
+        /// Since RabbitMQ will keep the messages in-memory, this mode is faster but the messages will be lost in case of a server restart or crash.
         /// </summary>
-        Transient,
+        OpenOrCreateInMemory,
         /// <summary>
-        /// Slower mode with a durable and persistent queue that will ensure all messages are written to disk
+        /// Open or creates a durable queue and publishes messages with persistence (slower since every message is written to disk).<para/>
+        /// Also ensures that a delayed exchange exists.<para/>
+        /// Since RabbitMQ will keep the messages in-memory, this mode is slower but safer in case of a server restart or crash.
         /// </summary>
-        Persistent,
+        OpenOrCreatePersistent,
         /// <summary>
-        /// Tries to create a temporary transient queue that will be deleted after all clients disconnects
+        /// Open or creates a temporary queue and publishes messages as transient (in-memory) that will be deleted after all consumers disconnects.<para/>
+        /// Also ensures that a delayed exchange exists.<para/>
+        /// Since RabbitMQ will keep the messages in-memory, this mode is faster but the messages will be lost in case of a server restart or crash.
         /// </summary>
-        Temporary,        
+        OpenOrCreateTemporary,        
         /// <summary>
-        /// All messages will be published without persistence but the queue will not be created if not exits 
+        /// All messages will be published in-memory but the queue will not be created if not exists.<para/>
+        /// Since RabbitMQ will keep the messages in-memory, this mode is faster.
         /// </summary>
-        ExistingTransient,
+        OpenInMemory,
         /// <summary>
-        /// All messages will be published as persistent but the queue will not be created if not exits 
+        /// All messages will be published as persistent (disk) but the queue will not be created if not exits.<para/>
+        /// Since RabbitMQ will keep the messages in-memory, this mode is slower but safer in case of a server restart or crash.
         /// </summary>
-        ExistingPersistent
+        OpenPersistent
     }
 
     public class RabbitConnectionFactory :  IDisposable
@@ -446,7 +492,7 @@ namespace RabbitMqTest
         }
 
         public void Close()
-        {
+        {            
             if (_connection != null)
             {
                 // set auto close to true, so that it will close if no other channel is active

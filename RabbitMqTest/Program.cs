@@ -115,7 +115,7 @@ namespace RabbitMqTest
 
 		public static RabbitWorkQueue CreateQueue ()
 		{
-            return new RabbitWorkQueue (ProgramOptions.Get ("rabbitmq"), "RabbitMqTest-test-queue", 0, RabbitWorkQueueMode.Transient, 0, 1000);
+            return new RabbitWorkQueue (ProgramOptions.Get ("rabbitmq"), "RabbitMqTest-test-queue", 0, RabbitWorkQueueMode.OpenOrCreateInMemory, 0, 1000);
 		}
 
 	}
