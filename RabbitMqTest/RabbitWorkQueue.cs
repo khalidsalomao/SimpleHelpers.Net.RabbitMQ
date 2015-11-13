@@ -569,13 +569,13 @@ namespace RabbitMqTest
                             if (ex is RabbitMQ.Client.Exceptions.AuthenticationFailureException ||
                                 ex.InnerException is RabbitMQ.Client.Exceptions.AuthenticationFailureException)
                                 throw;
-                            // try 5 times before giving up...
-                            if (tryCount++ > 3)
+                            // try 6 times before giving up...
+                            if (tryCount++ > 4)
                                 throw;
                             // wait a while before trying again
                             if (ex is RabbitMQ.Client.Exceptions.ConnectFailureException ||
                                 ex.InnerException is RabbitMQ.Client.Exceptions.ConnectFailureException)
-                                Task.Delay (250).Wait ();
+                                Task.Delay (300).Wait ();
                         }
                     }
                 }
