@@ -19,6 +19,9 @@ Description and Examples
 
 SimpleHelpers.RabbitWorkQueue is a simple helper class (RabbitWorkQueue) that implements a work queue using RabbitMQ server and the official [RabbitMQ .NET Client](https://www.rabbitmq.com/dotnet.html).
 
+This work queue implementation will distribute messages (tasks) among workers. Each message will be send only once to a worker and, in case of failure to process the message, it will safelly be returned to the queue or sent to the dead-letter queue.
+
+
 ### Features
 
 + Wrapper the RabbitMQ .net client for work queue use case.
